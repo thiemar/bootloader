@@ -66,7 +66,7 @@ __attribute__((noreturn))
 bootloader_main(void) {
     uavcan_frame_id_t tx_frame_metadata, rx_frame_metadata;
     uint32_t tx_frame_payload[2], tx_frame_id, rx_frame_payload[2],
-             rx_frame_id, uptime_sec;
+             rx_frame_id, uptime_sec, last_request_cyccnt;
     size_t tx_frame_len, rx_frame_len;
     uint8_t got_frame;
 
@@ -154,7 +154,6 @@ bootloader_main(void) {
 
         A Timeout(Tboot) will never occur if !AppValid
         */
-        uint32_t last_request_cyccnt;
         do {
             /* UAVCANBootloader_v0.3 #18.7: Req559.DynamicNodeIDAllocation.uavcan(uuid,0) */
             tx_frame_metadata.transfer_id++;
@@ -274,6 +273,7 @@ bootloader_main(void) {
         goto failure;
     }
 
+    uint8_t retries;
     while (1) {
         retries = 3;
         last_request_cyccnt = DWT->CYCCNT;

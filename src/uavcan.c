@@ -245,8 +245,13 @@ can_error_t uavcan_autobaud(void) {
         */
         if (!g_bootloader_tboot_timeout &&
                 bit_cycles < current_speed_bit_cycles) {
-            current_speed++;
-            current_speed_bit_cycles >>= 1u;
+            /* Increase speed to match the bit timing */
+            do {
+                current_speed++;
+                current_speed_bit_cycles >>= 1u;
+            } while (bit_cycles < current_speed_bit_cycles &&
+                     current_speed < CAN_1MBAUD);
+
             status = uavcan_init(current_speed);
             if (status != CAN_OK) {
                 return status;
