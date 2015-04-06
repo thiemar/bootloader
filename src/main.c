@@ -153,7 +153,7 @@ bootloader_main(void) {
     }
 
     /* Start SysTick interrupt for Tboot and NodeStatus messages */
-    SysTick->LOAD = 72000000u / 100u - 1u;
+    SysTick->LOAD = OPT_CPU_FREQ_HZ / 100u - 1u;
     SysTick->VAL = 0u;
     SysTick->CTRL = SysTick_CTRL_CLKSOURCE_Msk | SysTick_CTRL_TICKINT_Msk |
                     SysTick_CTRL_ENABLE_Msk;
