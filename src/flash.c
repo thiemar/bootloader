@@ -3,6 +3,7 @@
 #include "stm32f30x.h"
 #include "bootloader_config.h"
 #include "flash.h"
+#include "crc.h"
 
 
 #define APP_FLASH_ADDR (FLASH_BASE + OPT_APPLICATION_IMAGE_OFFSET)
@@ -21,10 +22,20 @@ static flash_error_t flash_wait_(void) {
 
 
 flash_error_t flash_erase(void) {
+    /*
+    FIXME (?): this may take a long time, and while flash is being erased it
+    might not be possible to execute interrupts, send NodeStatus messages etc.
+
+    It might be better to re-lock flash, enable interrupts and wait for a bit
+    after each page.
+    */
+
     uint32_t addr;
     flash_error_t status;
 
     status = FLASH_OK;
+
+    /* TODO: disable interrupts */
 
     /* FLASH_Unlock(); */
     FLASH->KEYR = FLASH_KEY1;
@@ -53,6 +64,8 @@ flash_error_t flash_erase(void) {
     /* FLASH_Lock(); */
     FLASH->CR |= FLASH_CR_LOCK;
 
+    /* TODO: enable interrupts */
+
     return status;
 }
 
@@ -73,6 +86,8 @@ flash_error_t flash_write_data(
         return FLASH_ERROR;
     }
 
+    /* TODO: disable interrupts */
+
     /* FLASH_Unlock(); */
     FLASH->KEYR = FLASH_KEY1;
     FLASH->KEYR = FLASH_KEY2;
@@ -91,6 +106,8 @@ flash_error_t flash_write_data(
     /* FLASH_Lock(); */
     FLASH->CR |= FLASH_CR_LOCK;
 
+    /* TODO: enable interrupts */
+
     /* Loop ended early -- a word must have been written incorrectly */
     if (flash_address != end_address) {
         return FLASH_ERROR;
@@ -102,8 +119,18 @@ flash_error_t flash_write_data(
 
 uint64_t flash_crc(
     uint32_t flash_address,
-    size_t length
+    size_t length,
+    uint64_t initial_crc
 ) {
-    /* TODO */
-    return 0;
+    volatile uint8_t *flash_ptr;
+    uint64_t crc;
+
+    flash_ptr = (volatile uint8_t*)flash_address;
+    crc = initial_crc;
+    for (; (uint32_t)flash_ptr < flash_address + length; flash_ptr++) {
+        crc = crc64_add(crc, *flash_ptr);
+    }
+    crc ^= CRC64_OUTPUT_XOR;
+
+    return crc;
 }

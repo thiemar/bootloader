@@ -14,5 +14,6 @@ flash_error_t flash_write_data(
 );
 uint64_t flash_crc(
     uint32_t flash_address,
-    size_t length
+    size_t length,
+    uint64_t initial_crc
 );
