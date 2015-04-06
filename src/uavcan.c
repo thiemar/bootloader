@@ -425,6 +425,7 @@ void uavcan_tx_nodestatus(
 
     message.uptime_sec = uptime_sec;
     message.status_code = status_code;
+    message.vendor_specific_status_code = 0u;
     frame_len = uavcan_pack_nodestatus(payload, &message);
 
     uavcan_tx(&metadata, frame_len, payload, 1u);

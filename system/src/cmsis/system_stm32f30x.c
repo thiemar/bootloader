@@ -164,7 +164,7 @@ static void SetSysClock(void);
   * @param  None
   * @retval None
   */
-void __attribute__((section(".bootloader"),externally_visible)) SystemInit(void)
+void __attribute__((externally_visible)) SystemInit(void)
 {
   /* FPU settings ------------------------------------------------------------*/
   #if (__FPU_PRESENT == 1) && (__FPU_USED == 1)
@@ -215,7 +215,7 @@ void __attribute__((section(".bootloader"),externally_visible)) SystemInit(void)
   * @param  None
   * @retval None
   */
-static void __attribute__((section(".bootloader"))) SetSysClock(void)
+static void SetSysClock(void)
 {
   __IO uint32_t StartUpCounter = 0, HSEStatus = 0;
 

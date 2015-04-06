@@ -456,6 +456,7 @@ void bootloader_poll_getnodeinfo(void) {
         /* UAVCANBootloader_v0.3 #21.2.1.2: [AppValid]:SetAppVersion(SwVerion) */
         node_status.uptime_sec = g_bootloader_uptime;
         node_status.status_code = g_bootloader_status_code;
+        node_status.vendor_specific_status_code = 0u;
         uavcan_pack_nodestatus(response.nodestatus, &node_status);
         if (g_bootloader_app_valid) {
             response.software_version.major =
