@@ -5,6 +5,14 @@
 #include "bootloader_config.h"
 
 
+#define PORT_CAN_SILENT GPIOB
+#define PIN_CAN_SILENT_INDEX 6
+#define PORT_CAN_RX GPIOA
+#define PIN_CAN_RX_INDEX 11
+#define PORT_CAN_TX GPIOA
+#define PIN_CAN_TX_INDEX 12
+
+
 uint8_t board_get_product_name(uint8_t *product_name) {
     product_name[0] = 'h';
     product_name[1] = 'i';
@@ -183,4 +191,9 @@ void board_indicate_fw_update_timeout(void) {
 
 void board_indicate_fw_update_invalid_crc(void) {
 
+}
+
+
+uint8_t board_get_wait_for_getnodeinfo_flag(void) {
+    return 1u;
 }

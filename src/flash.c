@@ -70,19 +70,14 @@ flash_error_t flash_erase(void) {
 }
 
 
-flash_error_t flash_write_data(
+flash_error_t flash_write_word(
     uint32_t flash_address,
-    size_t length,
-    const uint8_t* data
+    const uint8_t data[4]
 ) {
     flash_error_t status;
-    uint32_t start_address, end_address;
 
-    status = FLASH_OK;
-    start_address = flash_address;
-    end_address = start_address + length;
-
-    if (start_address < APP_FLASH_ADDR || end_address > APP_FLASH_END) {
+    if (flash_address < APP_FLASH_ADDR ||
+            flash_address + 4u > APP_FLASH_END) {
         return FLASH_ERROR;
     }
 
@@ -94,13 +89,17 @@ flash_error_t flash_write_data(
 
     /* FLASH_ProgramWord(addr, word); */
     FLASH->CR |= FLASH_CR_PG;
-    for (; flash_address < end_address && status == FLASH_OK;
-            flash_address += 2u) {
-        *(volatile uint16_t*)flash_address = (uint16_t)
-            ((uint16_t)data[flash_address - start_address] |
-             (uint16_t)(data[1u + flash_address - start_address] << 8u));
+
+    ((volatile uint16_t*)flash_address)[0] =
+        (uint16_t)(data[0] | (data[1] << 8u));
+    status = flash_wait_();
+
+    if (status == FLASH_OK) {
+        ((volatile uint16_t*)flash_address)[1] =
+            (uint16_t)(data[2] | (data[3] << 8u));
         status = flash_wait_();
     }
+
     FLASH->CR &= ~FLASH_CR_PG;
 
     /* FLASH_Lock(); */
@@ -108,29 +107,5 @@ flash_error_t flash_write_data(
 
     /* TODO: enable interrupts */
 
-    /* Loop ended early -- a word must have been written incorrectly */
-    if (flash_address != end_address) {
-        return FLASH_ERROR;
-    } else {
-        return FLASH_OK;
-    }
-}
-
-
-uint64_t flash_crc(
-    uint32_t flash_address,
-    size_t length,
-    uint64_t initial_crc
-) {
-    volatile uint8_t *flash_ptr;
-    uint64_t crc;
-
-    flash_ptr = (volatile uint8_t*)flash_address;
-    crc = initial_crc;
-    for (; (uint32_t)flash_ptr < flash_address + length; flash_ptr++) {
-        crc = crc64_add(crc, *flash_ptr);
-    }
-    crc ^= CRC64_OUTPUT_XOR;
-
-    return crc;
+    return status;
 }

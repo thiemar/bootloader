@@ -156,27 +156,24 @@ void uavcan_tx(
     const uint8_t *message,
     uint8_t mailbox
 ) {
-    uint32_t frame_id, rdhr, rdlr, cyccnt, mask;
+    uint32_t frame_id, data[2], cyccnt, mask, i;
     frame_id = uavcan_make_frame_id(message_id);
 
-    ((uint8_t*)&rdlr)[0] = message[0];
-    ((uint8_t*)&rdlr)[1] = message[1];
-    ((uint8_t*)&rdlr)[2] = message[2];
-    ((uint8_t*)&rdlr)[3] = message[3];
+    for (i = 0u; i < 8u; i++) {
+        ((uint8_t*)data)[i] = message[i];
+    }
 
-    ((uint8_t*)&rdhr)[0] = message[4];
-    ((uint8_t*)&rdhr)[1] = message[5];
-    ((uint8_t*)&rdhr)[2] = message[6];
-    ((uint8_t*)&rdhr)[3] = message[7];
-
-    if (mailbox == 0u) {
-        mask = CAN_TSR_TME0;
-    } else if (mailbox == 1u) {
-        mask = CAN_TSR_TME1;
-    } else if (mailbox == 2u) {
-        mask = CAN_TSR_TME2;
-    } else {
-        return;
+    switch (mailbox) {
+        case 0u:
+            mask = CAN_TSR_TME0;
+            break;
+        case 1u:
+            mask = CAN_TSR_TME1;
+            break;
+        case 2u:
+        default:
+            mask = CAN_TSR_TME2;
+            break;
     }
 
     /*
@@ -184,14 +181,13 @@ void uavcan_tx(
     frame to avoid an issue I'm seeing with packets going missing on a USBtin.
     */
     cyccnt = DWT->CYCCNT;
-    while (DWT->CYCCNT - cyccnt < 48000u);
-    while (!(CAN1->TSR & mask));
+    while (!(CAN1->TSR & mask) || DWT->CYCCNT - cyccnt < 48000u);
 
     CAN1->sTxMailBox[mailbox].TIR = 0;
     CAN1->sTxMailBox[mailbox].TIR |= (frame_id << 3u) | 0x4u;
     CAN1->sTxMailBox[mailbox].TDTR = length;
-    CAN1->sTxMailBox[mailbox].TDLR = rdlr;
-    CAN1->sTxMailBox[mailbox].TDHR = rdhr;
+    CAN1->sTxMailBox[mailbox].TDLR = data[0];
+    CAN1->sTxMailBox[mailbox].TDHR = data[1];
     CAN1->sTxMailBox[mailbox].TIR |= 1u;
 }
 
@@ -202,43 +198,37 @@ uint8_t uavcan_rx(
     uint8_t *out_message,
     uint8_t fifo
 ) {
-    uint32_t frame_id, rdhr, rdlr;
+    uint32_t frame_id, data[2], i;
 
     /* Check if a message is pending */
     if (fifo == 0u && !(CAN1->RF0R & 3u)) {
-        return 0;
+        return 0u;
     } else if (fifo == 1u && !(CAN1->RF1R & 3u)) {
-        return 0;
+        return 0u;
     } else if (fifo > 1u) {
-        return 0;
+        return 0u;
     }
 
     /* If so, process it */
     frame_id = CAN1->sFIFOMailBox[fifo].RIR >> 3u;
     *out_length = CAN1->sFIFOMailBox[fifo].RDTR & 0xFu;
-    rdhr = CAN1->sFIFOMailBox[fifo].RDHR;
-    rdlr = CAN1->sFIFOMailBox[fifo].RDLR;
+    data[0] = CAN1->sFIFOMailBox[fifo].RDLR;
+    data[1] = CAN1->sFIFOMailBox[fifo].RDHR;
 
     /* Release the message from the receive FIFO */
-    if (fifo == 0) {
+    if (fifo == 0u) {
         CAN1->RF0R |= CAN_RF0R_RFOM0;
     } else {
         CAN1->RF1R |= CAN_RF1R_RFOM1;
     }
 
-    out_message[0] = ((uint8_t*)&rdlr)[0];
-    out_message[1] = ((uint8_t*)&rdlr)[1];
-    out_message[2] = ((uint8_t*)&rdlr)[2];
-    out_message[3] = ((uint8_t*)&rdlr)[3];
-
-    out_message[4] = ((uint8_t*)&rdhr)[0];
-    out_message[5] = ((uint8_t*)&rdhr)[1];
-    out_message[6] = ((uint8_t*)&rdhr)[2];
-    out_message[7] = ((uint8_t*)&rdhr)[3];
+    for (i = 0u; i < 8u; i++) {
+        out_message[i] = ((uint8_t*)data)[i];
+    }
 
     uavcan_parse_frame_id(out_message_id, frame_id);
 
-    return 1;
+    return 1u;
 }
 
 
@@ -268,7 +258,6 @@ can_error_t uavcan_autobaud(void) {
     if (status != CAN_OK) {
         return status;
     }
-
 
     /* Wait for the first transition */
     last_msr = CAN1->MSR;
@@ -341,13 +330,10 @@ size_t uavcan_pack_dynamicnodeidallocation(
     uint8_t *data,
     const uavcan_dynamicnodeidallocation_t *payload
 ) {
-    data[0] = ((uint8_t*)&payload->short_unique_id)[0];
-    data[1] = ((uint8_t*)&payload->short_unique_id)[1];
-    data[2] = ((uint8_t*)&payload->short_unique_id)[2];
-    data[3] = ((uint8_t*)&payload->short_unique_id)[3];
-    data[4] = ((uint8_t*)&payload->short_unique_id)[4];
-    data[5] = ((uint8_t*)&payload->short_unique_id)[5];
-    data[6] = ((uint8_t*)&payload->short_unique_id)[6];
+    size_t i;
+    for (i = 0u; i < 7u; i++) {
+        data[i] = ((uint8_t*)&payload->short_unique_id)[i];
+    }
     data[7] = (uint8_t)
             (((((uint8_t*)&payload->short_unique_id)[7] & 0x1u) << 7u) |
             (payload->node_id & 0x7Fu));
@@ -359,13 +345,10 @@ void uavcan_unpack_dynamicnodeidallocation(
     uavcan_dynamicnodeidallocation_t *payload,
     const uint8_t *data
 ) {
-    ((uint8_t*)&payload->short_unique_id)[0] = data[0];
-    ((uint8_t*)&payload->short_unique_id)[1] = data[1];
-    ((uint8_t*)&payload->short_unique_id)[2] = data[2];
-    ((uint8_t*)&payload->short_unique_id)[3] = data[3];
-    ((uint8_t*)&payload->short_unique_id)[4] = data[4];
-    ((uint8_t*)&payload->short_unique_id)[5] = data[5];
-    ((uint8_t*)&payload->short_unique_id)[6] = data[6];
+    size_t i;
+    for (i = 0u; i < 7u; i++) {
+        ((uint8_t*)&payload->short_unique_id)[i] = data[i];
+    }
     ((uint8_t*)&payload->short_unique_id)[7] = data[7] >> 7u;
     payload->node_id = data[7] & 0x7Fu;
 }
@@ -746,7 +729,8 @@ static can_error_t uavcan_rx_multiframe_(
                 (message_id->source_node_id == 0xFFu ||
                     rx_id.source_node_id == message_id->source_node_id) &&
                 (message_id->transfer_id == 0xFFu ||
-                    rx_id.transfer_id == message_id->transfer_id) &&
+                    (rx_id.transfer_id & 7u) ==
+                    (message_id->transfer_id & 7u)) &&
                 rx_id.transfer_type == message_id->transfer_type &&
                 rx_id.data_type_id == message_id->data_type_id &&
                 rx_id.frame_index == num_frames &&
