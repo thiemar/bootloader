@@ -35,36 +35,32 @@ flash_error_t flash_erase(void) {
 
     status = FLASH_OK;
 
-    /* TODO: disable interrupts */
-
-    /* FLASH_Unlock(); */
-    FLASH->KEYR = FLASH_KEY1;
-    FLASH->KEYR = FLASH_KEY2;
-
     /* Erase the whole application flash region */
-    for (addr = APP_FLASH_ADDR; addr < APP_FLASH_END; addr += FLASH_PAGE_SIZE) {
+    for (addr = APP_FLASH_ADDR; addr < APP_FLASH_END && status == FLASH_OK;
+            addr += FLASH_PAGE_SIZE) {
+        __disable_irq();
+
+        /* FLASH_Unlock(); */
+        FLASH->KEYR = FLASH_KEY1;
+        FLASH->KEYR = FLASH_KEY2;
+
         /* FLASH_ErasePage(addr); */
         status = flash_wait_();
-        if (status) {
-            break;
+        if (status == FLASH_OK) {
+            FLASH->CR |= FLASH_CR_PER;
+            FLASH->AR  = addr;
+            FLASH->CR |= FLASH_CR_STRT;
+
+            status = flash_wait_();
+
+            FLASH->CR &= ~FLASH_CR_PER;
         }
 
-        FLASH->CR |= FLASH_CR_PER;
-        FLASH->AR  = addr;
-        FLASH->CR |= FLASH_CR_STRT;
+        /* FLASH_Lock(); */
+        FLASH->CR |= FLASH_CR_LOCK;
 
-        status = flash_wait_();
-
-        FLASH->CR &= ~FLASH_CR_PER;
-        if (status) {
-            break;
-        }
+        __enable_irq();
     }
-
-    /* FLASH_Lock(); */
-    FLASH->CR |= FLASH_CR_LOCK;
-
-    /* TODO: enable interrupts */
 
     return status;
 }
@@ -81,7 +77,7 @@ flash_error_t flash_write_word(
         return FLASH_ERROR;
     }
 
-    /* TODO: disable interrupts */
+    __disable_irq();
 
     /* FLASH_Unlock(); */
     FLASH->KEYR = FLASH_KEY1;
@@ -105,7 +101,7 @@ flash_error_t flash_write_word(
     /* FLASH_Lock(); */
     FLASH->CR |= FLASH_CR_LOCK;
 
-    /* TODO: enable interrupts */
+    __enable_irq();
 
     return status;
 }

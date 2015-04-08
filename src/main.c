@@ -45,6 +45,7 @@ flash_error_t bootloader_file_read_and_program(
 );
 uint8_t bootloader_is_app_valid(uint32_t first_word);
 void bootloader_find_descriptor(void);
+void application_run(void);
 
 volatile uint8_t g_bootloader_node_id;
 volatile uint8_t g_bootloader_status_code;
@@ -99,7 +100,7 @@ __attribute__((noreturn))
 bootloader_main(void) {
     uint64_t fw_image_crc;
     size_t fw_image_size;
-    uint32_t restart_ticks, fw_word0, fw_word1;
+    uint32_t restart_ticks, fw_word0;
     uint8_t fw_path[200], fw_path_length, fw_source_node_id;
     uint8_t app_bl_request, wait_for_getnodeinfo, error_log_stage,
             common_valid;
@@ -327,18 +328,7 @@ bootloader_main(void) {
 
 boot:
     /* UAVCANBootloader_v0.3 #50: jump_to_app */
-    SysTick->CTRL &= ~SysTick_CTRL_ENABLE_Msk;
-
-    __DSB(); /* Memory synchronisation barrier just in case */
-    __ISB(); /* Flush CPU instruction pipeline */
-    SCB->VTOR = OPT_APPLICATION_IMAGE_OFFSET; /* Update the vector offset */
-    __DSB(); /* Make sure the vector table offset write has finished */
-
-    /* Set up the application SP, clobber everything */
-    fw_word1 = g_fw_image[1];
-    asm volatile ("ldr sp, %0" : : "m" (g_fw_image) : "memory");
-    /* Jump to the reset handler, clobber everything */
-    asm volatile ("bx %0" : : "r" (fw_word1) : "memory");
+    application_run();
 
     /* We shouldn't ever fall through to the below */
 
@@ -866,4 +856,30 @@ void bootloader_find_descriptor(void) {
             break;
         }
     }
+}
+
+
+void __attribute__((externally_visible,noinline,noreturn))application_run(void) {
+    void (*const application)(void) =
+        (void (*)(void))(g_fw_image[1]);
+
+    SysTick->CTRL = 0;
+    SysTick->LOAD = 0;
+    SysTick->VAL = 0;
+
+    __disable_irq();
+    SCB->ICSR = SCB_ICSR_PENDSVCLR_Msk;
+
+    __DSB(); /* Memory synchronisation barrier just in case */
+    __ISB(); /* Flush CPU instruction pipeline */
+    SCB->VTOR = OPT_APPLICATION_IMAGE_OFFSET; /* Update the vector offset */
+    __DSB(); /* Make sure the vector table offset write has finished */
+
+    /* Set up the application SP */
+    __set_MSP(g_fw_image[0]);
+
+    /* Jump to the application's reset handler */
+    application();
+
+    while (1);
 }

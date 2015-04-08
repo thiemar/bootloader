@@ -517,7 +517,7 @@ can_error_t uavcan_rx_beginfirmwareupdate_request(
 
     status = uavcan_rx_multiframe_(node_id, message_id, (uint8_t*)request,
                                    &length, UAVCAN_BEGINFIRMWAREUPDATE_CRC,
-                                   1000u);
+                                   100u);
 
     if (status == CAN_OK && length >= 1u) {
         request->path_length = (uint8_t)(length - 1u);
