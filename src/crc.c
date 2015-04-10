@@ -1,4 +1,5 @@
 #include <stdint.h>
+#include <stdlib.h>
 #include "crc.h"
 
 
@@ -20,6 +21,19 @@ uint16_t crc16_add(uint16_t crc, uint8_t value) {
         }
     }
     return crc;
+}
+
+
+uint16_t crc16_signature(
+    uint16_t initial,
+    size_t length,
+    const uint8_t *bytes
+) {
+    size_t i;
+    for (i = 0u; i < length; i++) {
+        initial = crc16_add(initial, bytes[i]);
+    }
+    return initial ^ CRC16_OUTPUT_XOR;
 }
 
 

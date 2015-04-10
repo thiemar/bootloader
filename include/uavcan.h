@@ -3,20 +3,7 @@
 
 #include <stdint.h>
 #include <stdlib.h>
-
-
-typedef enum {
-    CAN_OK = 0,
-    CAN_ERROR
-} can_error_t;
-
-
-typedef enum {
-    CAN_125KBAUD = 0,
-    CAN_250KBAUD = 1,
-    CAN_500KBAUD = 2,
-    CAN_1MBAUD = 3
-} can_speed_t;
+#include "can.h"
 
 
 /* UAVCAN message formats */
@@ -173,20 +160,6 @@ typedef struct {
 /* Left the others out for now because we don't really care why it failed */
 
 
-void uavcan_tx(
-    const uavcan_frame_id_t *message_id,
-    size_t length,
-    const uint8_t *message,
-    uint8_t mailbox
-);
-uint8_t uavcan_rx(
-    uavcan_frame_id_t *out_message_id,
-    size_t *out_length,
-    uint8_t *out_message,
-    uint8_t fifo
-);
-can_error_t uavcan_init(can_speed_t speed);
-can_error_t uavcan_autobaud(void);
 size_t uavcan_pack_nodestatus(
     uint8_t *data,
     const uavcan_nodestatus_t *payload
@@ -203,8 +176,11 @@ size_t uavcan_pack_logmessage(
     uint8_t *data,
     const uavcan_logmessage_t *payload
 );
-uint32_t uavcan_make_frame_id(const uavcan_frame_id_t *metadata);
-void uavcan_parse_frame_id(uavcan_frame_id_t *metadata, uint32_t frame_id);
+uint32_t uavcan_make_message_id(const uavcan_frame_id_t *frame_id);
+void uavcan_parse_message_id(
+    uavcan_frame_id_t *frame_id,
+    uint32_t message_id
+);
 void uavcan_tx_nodestatus(
     uint8_t node_id,
     uint32_t uptime_sec,
@@ -219,7 +195,7 @@ void uavcan_tx_getnodeinfo_response(
 can_error_t uavcan_rx_beginfirmwareupdate_request(
     uint8_t node_id,
     uavcan_beginfirmwareupdate_request_t *request,
-    uavcan_frame_id_t *out_message_id
+    uavcan_frame_id_t *out_frame_id
 );
 void uavcan_tx_read_request(
     uint8_t node_id,

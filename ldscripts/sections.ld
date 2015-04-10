@@ -15,7 +15,7 @@ _estack = __stack; 	/* STM specific definition */
  * for the different modes.
  */
 
-__Main_Stack_Size = 1024 ;
+__Main_Stack_Size = 2048 ;
 
 PROVIDE ( _Main_Stack_Size = __Main_Stack_Size ) ;
 
@@ -28,7 +28,7 @@ PROVIDE ( _Main_Stack_Limit = __Main_Stack_Limit ) ;
  * There will be a link error if there is not this amount of
  * RAM free at the end.
  */
-_Minimum_Stack_Size = 256 ;
+_Minimum_Stack_Size = 2048 ;
 
 /*
  * Default heap definitions.
@@ -57,8 +57,6 @@ SECTIONS
     {
         . = ALIGN(4);
         KEEP(*(.isr_vector))     	/* Interrupt vectors */
-
-		KEEP(*(.cfmconfig))			/* Freescale configuration words */
 
         /*
          * This section is here for convenience, to store the
@@ -133,18 +131,6 @@ SECTIONS
     } >FLASH
 
     /*
-     * For some STRx devices, the beginning of the startup code
-     * is stored in the .flashtext section, which goes to FLASH.
-     */
-    .flashtext :
-    {
-        . = ALIGN(4);
-        *(.flashtext .flashtext.*)	/* Startup code */
-        . = ALIGN(4);
-    } >FLASH
-
-
-    /*
      * The program code is stored in the .text section,
      * which goes to FLASH.
      */
@@ -188,48 +174,6 @@ SECTIONS
     . = ALIGN(4);
     _etext = .;
     __etext = .;
-
-	/*
-     * This address is used by the startup code to
-     * initialise the .data section.
-     */
-    _sidata = _etext;
-
-    /* MEMORY_ARRAY */
-    /*
-    .ROarraySection :
-    {
-     	*(.ROarraySection .ROarraySection.*)
-    } >MEMORY_ARRAY
-    */
-
-    /*
-     * The initialised data section.
-     * The program executes knowing that the data is in the RAM
-     * but the loader puts the initial values in the FLASH (inidata).
-     * It is one task of the startup to copy the initial values from
-     * FLASH to RAM.
-     */
-    .data  : AT ( _sidata )
-    {
-	    . = ALIGN(4);
-
-        /* This is used by the startup code to initialise the .data section */
-        _sdata = . ;        	/* STM specific definition */
-        __data_start__ = . ;
-		*(.data_begin .data_begin.*)
-
-		*(.data .data.*)
-
-		*(.data_end .data_end.*)
-	    . = ALIGN(4);
-
-	    /* This is used by the startup code to initialise the .data section */
-        _edata = . ;        	/* STM specific definition */
-        __data_end__ = . ;
-
-    } >RAM
-
 
     /*
      * The uninitialised data section. NOLOAD is used to avoid
@@ -282,62 +226,6 @@ SECTIONS
 
 	    . = ALIGN(4);
     } >RAM
-
-	.bss_CCMRAM : ALIGN(4)
-	{
-		*(.bss.CCMRAM .bss.CCMRAM.*)
-	} > CCMRAM
-
-    /*
-     * The FLASH Bank1.
-     * The C or assembly source must explicitly place the code
-     * or data there using the "section" attribute.
-     */
-    .b1text :
-    {
-        *(.b1text)                   /* remaining code */
-        *(.b1rodata)                 /* read-only data (constants) */
-        *(.b1rodata.*)
-    } >FLASHB1
-
-    /*
-     * The EXTMEM.
-     * The C or assembly source must explicitly place the code or data there
-     * using the "section" attribute.
-     */
-
-    /* EXTMEM Bank0 */
-    .eb0text :
-    {
-        *(.eb0text)                   /* remaining code */
-        *(.eb0rodata)                 /* read-only data (constants) */
-        *(.eb0rodata.*)
-    } >EXTMEMB0
-
-    /* EXTMEM Bank1 */
-    .eb1text :
-    {
-        *(.eb1text)                   /* remaining code */
-        *(.eb1rodata)                 /* read-only data (constants) */
-        *(.eb1rodata.*)
-    } >EXTMEMB1
-
-    /* EXTMEM Bank2 */
-    .eb2text :
-    {
-        *(.eb2text)                   /* remaining code */
-        *(.eb2rodata)                 /* read-only data (constants) */
-        *(.eb2rodata.*)
-    } >EXTMEMB2
-
-    /* EXTMEM Bank0 */
-    .eb3text :
-    {
-        *(.eb3text)                   /* remaining code */
-        *(.eb3rodata)                 /* read-only data (constants) */
-        *(.eb3rodata.*)
-    } >EXTMEMB3
-
 
     /* After that there are only debugging sections. */
 

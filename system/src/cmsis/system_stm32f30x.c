@@ -121,33 +121,13 @@
 /* #define VECT_TAB_SRAM */
 #define VECT_TAB_OFFSET  0x0 /*!< Vector Table base offset field.
                                   This value must be a multiple of 0x200. */
-/**
-  * @}
-  */
-
-/** @addtogroup STM32F30x_System_Private_Macros
-  * @{
-  */
-
-/**
-  * @}
-  */
-
-/** @addtogroup STM32F30x_System_Private_Variables
-  * @{
-  */
-
-  uint32_t SystemCoreClock = 72000000;
-
-/**
-  * @}
-  */
 
 /** @addtogroup STM32F30x_System_Private_FunctionPrototypes
   * @{
   */
 
 static void SetSysClock(void);
+void SystemInit(void);
 
 /**
   * @}
@@ -283,85 +263,4 @@ static void SetSysClock(void)
          configuration. User can add here some code to deal with this error */
   }
 }
-
-/**
-   * @brief  Update SystemCoreClock variable according to Clock Register Values.
-  *         The SystemCoreClock variable contains the core clock (HCLK), it can
-  *         be used by the user application to setup the SysTick timer or configure
-  *         other parameters.
-  *
-  * @note   Each time the core clock (HCLK) changes, this function must be called
-  *         to update SystemCoreClock variable value. Otherwise, any configuration
-  *         based on this variable will be incorrect.
-  *
-  * @note   - The system frequency computed by this function is not the real
-  *           frequency in the chip. It is calculated based on the predefined
-  *           constant and the selected clock source:
-  *
-  *           - If SYSCLK source is HSI, SystemCoreClock will contain the HSI_VALUE(*)
-  *
-  *           - If SYSCLK source is HSE, SystemCoreClock will contain the HSE_VALUE(**)
-  *
-  *           - If SYSCLK source is PLL, SystemCoreClock will contain the HSE_VALUE(**)
-  *             or HSI_VALUE(*) multiplied/divided by the PLL factors.
-  *
-  *         (*) HSI_VALUE is a constant defined in stm32f30x.h file (default value
-  *             8 MHz) but the real value may vary depending on the variations
-  *             in voltage and temperature.
-  *
-  *         (**) HSE_VALUE is a constant defined in stm32f30x.h file (default value
-  *              8 MHz), user has to ensure that HSE_VALUE is same as the real
-  *              frequency of the crystal used. Otherwise, this function may
-  *              have wrong result.
-  *
-  *         - The result of this function could be not correct when using fractional
-  *           value for HSE crystal.
-  *
-  * @param  None
-  * @retval None
-  */
-void
-__attribute__((externally_visible))
-SystemCoreClockUpdate(void) {
-    uint32_t tmp = 0, pllmull = 0, pllsource = 0, prediv1factor = 0;
-
-    /* Get SYSCLK source -------------------------------------------------------*/
-    tmp = RCC->CFGR & RCC_CFGR_SWS;
-
-    switch (tmp) {
-        case 0x00:  /* HSI used as system clock */
-            SystemCoreClock = HSI_VALUE;
-            break;
-        case 0x04:  /* HSE used as system clock */
-            SystemCoreClock = HSE_VALUE;
-            break;
-        case 0x08:  /* PLL used as system clock */
-            /* Get PLL clock source and multiplication factor ----------------------*/
-            pllmull = RCC->CFGR & RCC_CFGR_PLLMULL;
-            pllsource = RCC->CFGR & RCC_CFGR_PLLSRC;
-            pllmull = ( pllmull >> 18) + 2;
-
-            if (pllsource == 0x00) {
-                /* HSI oscillator clock divided by 2 selected as PLL clock entry */
-                SystemCoreClock = (HSI_VALUE >> 1) * pllmull;
-            } else {
-                prediv1factor = (RCC->CFGR2 & RCC_CFGR2_PREDIV1) + 1;
-                /* HSE oscillator clock selected as PREDIV1 clock entry */
-                SystemCoreClock = (HSE_VALUE / prediv1factor) * pllmull;
-            }
-            break;
-        default: /* HSI used as system clock */
-            SystemCoreClock = HSI_VALUE;
-            break;
-    }
-    /* Compute HCLK clock frequency ----------------*/
-    /* Get HCLK prescaler */
-    tmp = (RCC->CFGR & RCC_CFGR_HPRE) >> 4;
-    if (tmp >= 8) {
-        /* HCLK clock frequency */
-        SystemCoreClock >>= tmp - 7;
-    }
-}
-
-/************************ (C) COPYRIGHT STMicroelectronics *****END OF FILE****/
 

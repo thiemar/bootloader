@@ -9,6 +9,10 @@
 #include "common.h"
 
 
+/* FIXME */
+extern void SystemInit(void);
+
+
 void SysTick_Handler(void);
 void bootloader_main(void);
 void bootloader_gpio_init(void);
@@ -46,6 +50,7 @@ flash_error_t bootloader_file_read_and_program(
 uint8_t bootloader_is_app_valid(uint32_t first_word);
 void bootloader_find_descriptor(void);
 void application_run(void);
+
 
 volatile uint8_t g_bootloader_node_id;
 volatile uint8_t g_bootloader_status_code;
@@ -220,9 +225,9 @@ bootloader_main(void) {
         g_bootloader_node_id = (uint8_t)common.node_id;
         g_bootloader_bus_speed = common.bus_speed;
         /* Set the bus speed, defaulting to 125 Kbaud if the value is non-zero but invalid */
-        uavcan_init(common.bus_speed == 1000000u ? CAN_1MBAUD :
-                    common.bus_speed ==  500000u ? CAN_500KBAUD :
-                    common.bus_speed ==  250000u ? CAN_250KBAUD : CAN_125KBAUD);
+        can_init(common.bus_speed == 1000000u ? CAN_1MBAUD :
+                 common.bus_speed ==  500000u ? CAN_500KBAUD :
+                 common.bus_speed ==  250000u ? CAN_250KBAUD : CAN_125KBAUD, 1u);
     }
 
     /* UAVCANBootloader_v0.3 #21.2.1: Req551.GetNodeInfo.uavcan() */
@@ -393,7 +398,7 @@ void bootloader_autobaud_and_get_dynamic_node_id(void) {
 
     /* UAVCANBootloader_v0.3 #16: [!AppBLRequest]:Auto Baud */
     /* UAVCANBootloader_v0.3 #17: [!AppBLRequest]:detect bitrate */
-    g_bootloader_bus_speed = uavcan_autobaud(); /* does UAVCANBootloader_v0.3 #18.1 */
+    g_bootloader_bus_speed = can_autobaud(); /* does UAVCANBootloader_v0.3 #18.1 */
 
     /* UAVCANBootloader_v0.3 #18.4: [Timeout(Tboot)]: jump_to_app (node_id is 0 => App need to Allocate or use Static NodeID */
     if (g_bootloader_tboot_expired) {
@@ -420,7 +425,7 @@ void bootloader_autobaud_and_get_dynamic_node_id(void) {
 uint8_t bootloader_get_dynamic_node_id(void) {
     uavcan_dynamicnodeidallocation_t allocation_msg, allocation_response;
     uavcan_frame_id_t tx_frame_id, rx_frame_id;
-    uint32_t last_request_ticks;
+    uint32_t last_request_ticks, rx_message_id;
     uint8_t tx_frame_payload[8], rx_frame_payload[8];
     size_t tx_frame_len, rx_frame_len;
     uint8_t node_id, got_frame;
@@ -452,7 +457,8 @@ uint8_t bootloader_get_dynamic_node_id(void) {
     do {
         /* UAVCANBootloader_v0.3 #18.7: Req559.DynamicNodeIDAllocation.uavcan(uuid,0) */
         tx_frame_id.transfer_id++;
-        uavcan_tx(&tx_frame_id, tx_frame_len, tx_frame_payload, 0u);
+        can_tx(uavcan_make_message_id(&tx_frame_id), tx_frame_len,
+               tx_frame_payload, 0u);
 
         /*
         FIXME: Rate limit is set to 2 messages per second. A rate limit
@@ -462,8 +468,10 @@ uint8_t bootloader_get_dynamic_node_id(void) {
         last_request_ticks = g_bootloader_uptime;
         while (!g_bootloader_tboot_expired &&
                 !bootloader_timeout(last_request_ticks, 50u)) {
-            got_frame = uavcan_rx(&rx_frame_id, &rx_frame_len,
-                                  rx_frame_payload, 0u);
+            rx_message_id = 0u;
+            got_frame = can_rx(&rx_message_id, &rx_frame_len,
+                               rx_frame_payload, 0u);
+            uavcan_parse_message_id(&rx_frame_id, rx_message_id);
             if (got_frame && rx_frame_id.data_type_id ==
                         UAVCAN_DYNAMICNODEIDALLOCATION_DTID) {
                 uavcan_unpack_dynamicnodeidallocation(&allocation_response,
@@ -490,6 +498,7 @@ void bootloader_poll_getnodeinfo(void) {
     uavcan_nodestatus_t node_status;
     uavcan_frame_id_t frame_id;
     size_t frame_len;
+    uint32_t rx_message_id;
     uint8_t frame_payload[8], got_frame;
 
     /*
@@ -497,7 +506,9 @@ void bootloader_poll_getnodeinfo(void) {
     and this is called from SysTick so needs to avoid the same FIFOs/mailboxes
     as the rest of the application.
     */
-    got_frame = uavcan_rx(&frame_id, &frame_len, frame_payload, 1u);
+    rx_message_id = 0u;
+    got_frame = can_rx(&rx_message_id, &frame_len, frame_payload, 1u);
+    uavcan_parse_message_id(&frame_id, rx_message_id);
     if (got_frame && frame_id.data_type_id == UAVCAN_GETNODEINFO_DTID &&
             frame_payload[0] == g_bootloader_node_id &&
             frame_id.last_frame) {
@@ -567,7 +578,7 @@ void bootloader_wait_for_beginfirmwareupdate(
         frame_id.source_node_id = g_bootloader_node_id;
         frame_id.transfer_type = SERVICE_RESPONSE;
 
-        uavcan_tx(&frame_id, 2u, frame_payload, 0u);
+        can_tx(uavcan_make_message_id(&frame_id), 2u, frame_payload, 0u);
 
         /* UAVCANBootloader_v0.3 #22.3: fwPath = image_file_remote_path */
         for (i = 0u; i < request.path_length; i++) {
@@ -796,7 +807,7 @@ void bootloader_send_log_message(
     message.message[0] = stage;
     message.message[1] = status;
     frame_len = uavcan_pack_logmessage(payload, &message);
-    uavcan_tx(&frame_id, frame_len, payload, 0u);
+    can_tx(uavcan_make_message_id(&frame_id), frame_len, payload, 0u);
 }
 
 
@@ -859,7 +870,9 @@ void bootloader_find_descriptor(void) {
 }
 
 
-void __attribute__((externally_visible,noinline,noreturn))application_run(void) {
+void
+__attribute__((externally_visible,noinline,noreturn))
+application_run(void) {
     void (*const application)(void) =
         (void (*)(void))(g_fw_image[1]);
 
