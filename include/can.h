@@ -2,16 +2,17 @@
 
 
 typedef enum {
-    CAN_OK = 0,
+    CAN_OK = 0u,
     CAN_ERROR
 } can_error_t;
 
 
 typedef enum {
-    CAN_125KBAUD = 0,
-    CAN_250KBAUD = 1,
-    CAN_500KBAUD = 2,
-    CAN_1MBAUD = 3
+    CAN_UNKNOWN = 0u,
+    CAN_125KBAUD = 1u,
+    CAN_250KBAUD = 2u,
+    CAN_500KBAUD = 3u,
+    CAN_1MBAUD = 4u
 } can_speed_t;
 
 

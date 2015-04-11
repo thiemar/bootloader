@@ -75,32 +75,32 @@ can_error_t can_init(can_speed_t speed, uint8_t silent) {
     CAN1->MCR |= (CAN_MCR_ABOM | CAN_MCR_AWUM);
     if (speed == CAN_1MBAUD) {
         CAN1->BTR =
-            ((silent ? CAN_Mode_Silent : CAN_Mode_Normal) << 30) |
-            (CAN_1MBAUD_SJW << 24) |
-            (CAN_1MBAUD_BS1 << 16) |
-            (CAN_1MBAUD_BS2 << 20) |
-            (CAN_1MBAUD_PRESCALER - 1);
+            ((silent ? CAN_Mode_Silent : CAN_Mode_Normal) << 30u) |
+            (CAN_1MBAUD_SJW << 24u) |
+            (CAN_1MBAUD_BS1 << 16u) |
+            (CAN_1MBAUD_BS2 << 20u) |
+            (CAN_1MBAUD_PRESCALER - 1u);
     } else if (speed == CAN_500KBAUD) {
         CAN1->BTR =
-            ((silent ? CAN_Mode_Silent : CAN_Mode_Normal) << 30) |
-            (CAN_500KBAUD_SJW << 24) |
-            (CAN_500KBAUD_BS1 << 16) |
-            (CAN_500KBAUD_BS2 << 20) |
-            (CAN_500KBAUD_PRESCALER - 1);
+            ((silent ? CAN_Mode_Silent : CAN_Mode_Normal) << 30u) |
+            (CAN_500KBAUD_SJW << 24u) |
+            (CAN_500KBAUD_BS1 << 16u) |
+            (CAN_500KBAUD_BS2 << 20u) |
+            (CAN_500KBAUD_PRESCALER - 1u);
     } else if (speed == CAN_250KBAUD) {
         CAN1->BTR =
-            ((silent ? CAN_Mode_Silent : CAN_Mode_Normal) << 30) |
-            (CAN_250KBAUD_SJW << 24) |
-            (CAN_250KBAUD_BS1 << 16) |
-            (CAN_250KBAUD_BS2 << 20) |
-            (CAN_250KBAUD_PRESCALER - 1);
+            ((silent ? CAN_Mode_Silent : CAN_Mode_Normal) << 30u) |
+            (CAN_250KBAUD_SJW << 24u) |
+            (CAN_250KBAUD_BS1 << 16u) |
+            (CAN_250KBAUD_BS2 << 20u) |
+            (CAN_250KBAUD_PRESCALER - 1u);
     } else if (speed == CAN_125KBAUD) {
         CAN1->BTR =
-            ((silent ? CAN_Mode_Silent : CAN_Mode_Normal) << 30) |
-            (CAN_125KBAUD_SJW << 24) |
-            (CAN_125KBAUD_BS1 << 16) |
-            (CAN_125KBAUD_BS2 << 20) |
-            (CAN_125KBAUD_PRESCALER - 1);
+            ((silent ? CAN_Mode_Silent : CAN_Mode_Normal) << 30u) |
+            (CAN_125KBAUD_SJW << 24u) |
+            (CAN_125KBAUD_BS1 << 16u) |
+            (CAN_125KBAUD_BS2 << 20u) |
+            (CAN_125KBAUD_PRESCALER - 1u);
     } else {
         return CAN_ERROR;
     }
@@ -220,7 +220,8 @@ uint8_t can_rx(
 
 can_error_t can_autobaud(void) {
     can_speed_t measured_speed;
-    uint32_t last_cyccnt, bit_cycles, measured_speed_bit_cycles, last_msr;
+    uint32_t last_cyccnt, bit_cycles, measured_speed_bit_cycles, last_msr,
+             overrun;
 
     /*
     First, try to initialize the CAN interface with the lowest possible speed.
@@ -241,7 +242,7 @@ can_error_t can_autobaud(void) {
             goto error;
         }
     }
-    last_cyccnt = DWT->CYCCNT;
+    last_cyccnt = SysTick->VAL;
 
     /* Start the bit timing loop */
     while (1) {
@@ -250,10 +251,19 @@ can_error_t can_autobaud(void) {
         while (~(CAN1->MSR ^ last_msr) & CAN_MSR_RX) {
             if (g_bootloader_tboot_expired) {
                 goto error;
+            } else if (SysTick->VAL > last_cyccnt) {
+                overrun = 1u;
             }
         }
-        bit_cycles = DWT->CYCCNT - last_cyccnt;
-        last_cyccnt = DWT->CYCCNT;
+
+        bit_cycles = last_cyccnt - SysTick->VAL + 20u;
+        last_cyccnt = SysTick->VAL;
+
+        /* Ignore any bits during which SysTick wrapped around */
+        if (overrun) {
+            overrun = 0u;
+            continue;
+        }
 
         /* If we received a frame at the current speed, it must be OK */
         if ((CAN1->RF0R | CAN1->RF1R) & 3u) {
@@ -282,7 +292,7 @@ can_error_t can_autobaud(void) {
                     goto error;
                 }
             }
-            last_cyccnt = DWT->CYCCNT;
+            last_cyccnt = SysTick->VAL;
         }
     }
 

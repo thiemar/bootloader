@@ -27,7 +27,11 @@ void bootloader_send_log_message(
 uint8_t bootloader_timeout(uint32_t start_ticks, uint32_t ticks);
 uint8_t bootloader_get_dynamic_node_id(void);
 void bootloader_autobaud_and_get_dynamic_node_id(void);
-void bootloader_poll_getnodeinfo(void);
+void bootloader_poll_getnodeinfo(
+    uint8_t node_id,
+    uint32_t uptime,
+    uint8_t status
+);
 void bootloader_wait_for_beginfirmwareupdate(
     uint8_t *fw_path,
     uint8_t *fw_path_length,
@@ -79,22 +83,25 @@ UAVCANBootloader_v0.3 #28.5: 550.NodeStatus.uavcan(uptime=t, STATUS_INITIALIZING
 UAVCANBootloader_v0.3 #49: 550.NodeStatus.uavcan(uptime=t, STATUS_INITIALIZING)
 */
 void SysTick_Handler(void) {
+    uint8_t node_id, status;
+    uint32_t uptime;
+
     /* Update uptime and check for Tboot expiry */
-    g_bootloader_uptime++;
-    if (g_bootloader_uptime > g_bootloader_tboot_deadline &&
-            g_bootloader_tboot_enable) {
+    uptime = ++g_bootloader_uptime;
+    if (uptime > g_bootloader_tboot_deadline && g_bootloader_tboot_enable) {
         g_bootloader_tboot_expired = 1u;
     }
 
-    if (g_bootloader_node_id) {
+    node_id = g_bootloader_node_id;
+    if (node_id) {
+        status = g_bootloader_status_code;
+
         /* Handle GetNodeInfo replies regardless of application state */
-        bootloader_poll_getnodeinfo();
+        bootloader_poll_getnodeinfo(node_id, uptime / 100u, status);
 
         /* Send uavcan.protocol.NodeStatus every 50 ticks */
-        if (g_bootloader_uptime % UAVCAN_NODESTATUS_INTERVAL_TICKS == 0) {
-            uavcan_tx_nodestatus(g_bootloader_node_id,
-                                 g_bootloader_uptime / 100u,
-                                 g_bootloader_status_code);
+        if (uptime % UAVCAN_NODESTATUS_INTERVAL_TICKS == 0) {
+            uavcan_tx_nodestatus(node_id, uptime / 100u, status);
         }
     }
 }
@@ -118,9 +125,9 @@ bootloader_main(void) {
     /* UAVCANBootloader_v0.3 #2: Clock, IO Init */
     board_initialize();
 
-    CoreDebug->DEMCR |= CoreDebug_DEMCR_TRCENA_Msk;
-    DWT->CYCCNT = 0u;
-    DWT->CTRL |= DWT_CTRL_CYCCNTENA_Msk;
+    SysTick->LOAD = OPT_CPU_FREQ_HZ / 100u - 1u;
+    SysTick->VAL = 0u;
+    SysTick->CTRL = SysTick_CTRL_CLKSOURCE_Msk | SysTick_CTRL_ENABLE_Msk;
 
     /* TODO UAVCANBootloader_v0.3 #4: EnableWatchDog */
 #ifdef OPT_ENABLE_WD
@@ -191,10 +198,7 @@ bootloader_main(void) {
     }
 
     /* Start SysTick interrupt for Tboot and NodeStatus messages */
-    SysTick->LOAD = OPT_CPU_FREQ_HZ / 100u - 1u;
-    SysTick->VAL = 0u;
-    SysTick->CTRL = SysTick_CTRL_CLKSOURCE_Msk | SysTick_CTRL_TICKINT_Msk |
-                    SysTick_CTRL_ENABLE_Msk;
+    SysTick->CTRL |= SysTick_CTRL_TICKINT_Msk;
 
     /* UAVCANBootloader_v0.3 #14: [AppBLRequest]:RestartFromApp */
     if (!app_bl_request) {
@@ -427,6 +431,7 @@ uint8_t bootloader_get_dynamic_node_id(void) {
     server_transfer_id = 0u;
     server_frame_index = 0u;
     server_allocated_node_id = 0u;
+    rx_crc = 0u;
 
     /*
     Rule A: on initialization, the client subscribes to
@@ -551,7 +556,11 @@ uint8_t bootloader_get_dynamic_node_id(void) {
 }
 
 
-void bootloader_poll_getnodeinfo(void) {
+void bootloader_poll_getnodeinfo(
+    uint8_t node_id,
+    uint32_t uptime,
+    uint8_t status
+) {
     uavcan_getnodeinfo_response_t response;
     uavcan_nodestatus_t node_status;
     uavcan_frame_id_t frame_id;
@@ -568,11 +577,11 @@ void bootloader_poll_getnodeinfo(void) {
     got_frame = can_rx(&rx_message_id, &frame_len, frame_payload, 1u);
     uavcan_parse_message_id(&frame_id, rx_message_id);
     if (got_frame && frame_id.data_type_id == UAVCAN_GETNODEINFO_DTID &&
-            frame_payload[0] == g_bootloader_node_id &&
+            frame_payload[0] == node_id &&
             frame_id.last_frame) {
         /* UAVCANBootloader_v0.3 #21.2.1.2: [AppValid]:SetAppVersion(SwVerion) */
-        node_status.uptime_sec = g_bootloader_uptime;
-        node_status.status_code = g_bootloader_status_code;
+        node_status.uptime_sec = uptime;
+        node_status.status_code = status;
         node_status.vendor_specific_status_code = 0u;
         uavcan_pack_nodestatus(response.nodestatus, &node_status);
         if (g_bootloader_app_valid) {
@@ -598,7 +607,7 @@ void bootloader_poll_getnodeinfo(void) {
         response.name_length = board_get_product_name(response.name);
 
         /* UAVCANBootloader_v0.3 #21.2.1.3: 551.GetNodeInfo.uavcan */
-        uavcan_tx_getnodeinfo_response(g_bootloader_node_id, &response,
+        uavcan_tx_getnodeinfo_response(node_id, &response,
                                        frame_id.source_node_id,
                                        frame_id.transfer_id);
 
