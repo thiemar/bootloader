@@ -219,9 +219,8 @@ uint8_t can_rx(
 
 
 can_error_t can_autobaud(void) {
-    can_speed_t current_speed;
-    can_error_t status;
-    uint32_t last_cyccnt, bit_cycles, current_speed_bit_cycles, last_msr;
+    can_speed_t measured_speed;
+    uint32_t last_cyccnt, bit_cycles, measured_speed_bit_cycles, last_msr;
 
     /*
     First, try to initialize the CAN interface with the lowest possible speed.
@@ -231,67 +230,66 @@ can_error_t can_autobaud(void) {
     initialization. If that fails, we know that the bus is running (much)
     faster than the current speed, so increase it and try again.
     */
-    current_speed = CAN_125KBAUD;
-    current_speed_bit_cycles = CAN_125KBAUD_BIT_CYCLES -
-                               (CAN_125KBAUD_BIT_CYCLES >> 2u);
-    do {
-        status = can_init(current_speed, 1u);
-        if (status != CAN_OK) {
-            current_speed++;
-            current_speed_bit_cycles >>= 1u;
-        }
-    } while (current_speed <= CAN_1MBAUD && status != CAN_OK);
-    if (status != CAN_OK) {
-        return status;
-    }
+    measured_speed = CAN_UNKNOWN;
+    measured_speed_bit_cycles = (CAN_125KBAUD_BIT_CYCLES -
+                                 (CAN_125KBAUD_BIT_CYCLES >> 2u)) << 1u;
 
     /* Wait for the first transition */
     last_msr = CAN1->MSR;
-    while (!g_bootloader_tboot_expired &&
-            ~(CAN1->MSR ^ last_msr) & CAN_MSR_RX);
+    while (~(CAN1->MSR ^ last_msr) & CAN_MSR_RX) {
+        if (g_bootloader_tboot_expired) {
+            goto error;
+        }
+    }
     last_cyccnt = DWT->CYCCNT;
 
     /* Start the bit timing loop */
-    do {
+    while (1) {
         last_msr = CAN1->MSR;
         /* Measure the duration of the next transition */
-        while (!g_bootloader_tboot_expired &&
-            ~(CAN1->MSR ^ last_msr) & CAN_MSR_RX);
+        while (~(CAN1->MSR ^ last_msr) & CAN_MSR_RX) {
+            if (g_bootloader_tboot_expired) {
+                goto error;
+            }
+        }
         bit_cycles = DWT->CYCCNT - last_cyccnt;
         last_cyccnt = DWT->CYCCNT;
+
+        /* If we received a frame at the current speed, it must be OK */
+        if ((CAN1->RF0R | CAN1->RF1R) & 3u) {
+            break;
+        }
 
         /*
         If the number of cycles for the last bit transition was smaller than
         the duration of a bit at the current speed, change to the next higher
         speed.
         */
-        if (!g_bootloader_tboot_expired &&
-                bit_cycles < current_speed_bit_cycles) {
+        if (bit_cycles < measured_speed_bit_cycles) {
             /* Increase speed to match the bit timing */
-            do {
-                current_speed++;
-                current_speed_bit_cycles >>= 1u;
-            } while (bit_cycles < current_speed_bit_cycles &&
-                     current_speed < CAN_1MBAUD);
-
-            status = can_init(current_speed, 0u);
-            if (status != CAN_OK) {
-                return status;
+            while (bit_cycles < measured_speed_bit_cycles &&
+                   measured_speed < CAN_1MBAUD) {
+                measured_speed++;
+                measured_speed_bit_cycles >>= 1u;
             }
+
+            (void)can_init(measured_speed, 1u);
 
             /* Wait for the next transition */
             last_msr = CAN1->MSR;
-            while (!g_bootloader_tboot_expired &&
-                   ~(CAN1->MSR ^ last_msr) & CAN_MSR_RX);
+            while (~(CAN1->MSR ^ last_msr) & CAN_MSR_RX) {
+                if (g_bootloader_tboot_expired) {
+                    goto error;
+                }
+            }
             last_cyccnt = DWT->CYCCNT;
         }
-    } while (!g_bootloader_tboot_expired && current_speed < CAN_1MBAUD &&
-             !(CAN1->RF0R & 3u) && !(CAN1->RF1R & 3u));
-
-    /* Did we time out or get a message? */
-    if (g_bootloader_tboot_expired) {
-        return CAN_ERROR;
-    } else {
-        return can_init(current_speed, 00u);
     }
+
+    if (measured_speed > CAN_UNKNOWN) {
+        return can_init(measured_speed, 0u);
+    }
+
+error:
+    return CAN_ERROR;
 }
