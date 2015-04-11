@@ -160,6 +160,9 @@ typedef struct {
 /* Left the others out for now because we don't really care why it failed */
 
 
+#define UAVCAN_ALLOCATION_CRC 0x7BAAu
+
+
 size_t uavcan_pack_nodestatus(
     uint8_t *data,
     const uavcan_nodestatus_t *payload

@@ -412,9 +412,9 @@ uint8_t bootloader_get_dynamic_node_id(void) {
     uint32_t request_deadline_ticks, rx_message_id;
     uint8_t rx_payload[8], node_id, got_allocation, server_node_id,
             server_transfer_id, server_allocated_node_id, server_frame_index,
-            unique_id_matched, transfer_id, previously_matched;
+            unique_id_matched, transfer_id;
     size_t rx_len, i, offset;
-    uint16_t crc;
+    uint16_t rx_crc, expected_crc;
 
     /* UAVCANBootloader_v0.3 #18.6: GetUUID() */
     board_get_hardware_version(&hw_version);
@@ -423,7 +423,6 @@ uint8_t bootloader_get_dynamic_node_id(void) {
     transfer_id = 0u;
     got_allocation = 0u;
     unique_id_matched = 0u;
-    previously_matched = 0u;
     server_node_id = 0u;
     server_transfer_id = 0u;
     server_frame_index = 0u;
@@ -482,11 +481,9 @@ uint8_t bootloader_get_dynamic_node_id(void) {
                     rx_frame_id.frame_index == 0) {
             /* First (only?) frame of the transfer */
             if (rx_frame_id.last_frame) {
-                crc = 0u;
-                server_allocated_node_id = rx_payload[0];
                 offset = 1u;
             } else {
-                crc = (uint16_t)(rx_payload[0] | (rx_payload[1] << 8u));
+                rx_crc = (uint16_t)(rx_payload[0] | (rx_payload[1] << 8u));
                 server_allocated_node_id = rx_payload[2];
                 offset = 3u;
             }
@@ -494,7 +491,9 @@ uint8_t bootloader_get_dynamic_node_id(void) {
             server_transfer_id = rx_frame_id.transfer_id;
             unique_id_matched = 0u;
             server_frame_index = 1u;
-        } else if (rx_frame_id.frame_index != server_frame_index){
+        } else if (rx_frame_id.frame_index != server_frame_index) {
+            /* Abort if the frame index is wrong */
+            server_node_id = 0u;
             continue;
         } else {
             offset = 0u;
@@ -523,26 +522,28 @@ uint8_t bootloader_get_dynamic_node_id(void) {
         */
 
         /* Count the number of unique ID bytes matched */
-        previously_matched = unique_id_matched;
         for (i = offset; i < rx_len && unique_id_matched < 16u &&
                 hw_version.unique_id[unique_id_matched] == rx_payload[i];
             unique_id_matched++, i++);
 
-        if (i < rx_len - offset) {
+        if (i < rx_len) {
             /* Abort if we didn't match the whole unique ID */
             server_node_id = 0u;
-        } if (!rx_frame_id.last_frame) {
-            /* Don't take action until the last frame of the message */
-            continue;
-        } else  if (unique_id_matched < 16u) {
+        } else if (rx_frame_id.last_frame && unique_id_matched < 16u) {
             /* Case D */
-            uavcan_tx_allocation_message(node_id, 16u,
-                                         hw_version.unique_id,
-                                         unique_id_matched,
-                                         transfer_id++);
-        } else if (unique_id_matched == 16u) {
+            uavcan_tx_allocation_message(node_id, 16u, hw_version.unique_id,
+                                         unique_id_matched, transfer_id++);
+        } else if (rx_frame_id.last_frame) {
+            /* Validate CRC */
+            expected_crc = UAVCAN_ALLOCATION_CRC;
+            expected_crc = crc16_add(expected_crc, server_allocated_node_id);
+            expected_crc = crc16_signature(expected_crc, 16u,
+                                           hw_version.unique_id);
+
             /* Case E */
-            node_id = server_allocated_node_id >> 1u;
+            if (rx_crc == expected_crc) {
+                node_id = server_allocated_node_id >> 1u;
+            }
         }
     } while (node_id == 0u && !g_bootloader_tboot_expired);
 
