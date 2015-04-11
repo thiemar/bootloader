@@ -131,7 +131,7 @@ void uavcan_tx_allocation_message(
 
     frame_id.transfer_id = transfer_id;
     frame_id.last_frame = 1u;
-    frame_id.frame_index = 0u; //checksum;
+    frame_id.frame_index = (uint8_t)checksum;
     frame_id.source_node_id = 0u;
     frame_id.transfer_type = MESSAGE_BROADCAST;
     frame_id.data_type_id = UAVCAN_DYNAMICNODEIDALLOCATION_DTID;
