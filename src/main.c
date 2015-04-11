@@ -214,7 +214,7 @@ bootloader_main(void) {
             common.bus_speed =
                 g_bootloader_bus_speed == CAN_1MBAUD   ? 1000000u :
                 g_bootloader_bus_speed == CAN_500KBAUD ?  500000u :
-                g_bootloader_bus_speed == CAN_250KBAUD ?  250000u : 125000u ;
+                g_bootloader_bus_speed == CAN_250KBAUD ?  250000u : 125000u;
         }
 
         /* UAVCANBootloader_v0.3 #21.1: initSeconds(0) */
@@ -227,7 +227,7 @@ bootloader_main(void) {
         /* Set the bus speed, defaulting to 125 Kbaud if the value is non-zero but invalid */
         can_init(common.bus_speed == 1000000u ? CAN_1MBAUD :
                  common.bus_speed ==  500000u ? CAN_500KBAUD :
-                 common.bus_speed ==  250000u ? CAN_250KBAUD : CAN_125KBAUD, 1u);
+                 common.bus_speed ==  250000u ? CAN_250KBAUD : CAN_125KBAUD, 0u);
     }
 
     /* UAVCANBootloader_v0.3 #21.2.1: Req551.GetNodeInfo.uavcan() */
@@ -376,22 +376,6 @@ void __attribute__((noreturn)) bootloader_reset(void) {
 }
 
 
-uint64_t bootloader_get_short_unique_id(void) {
-    uavcan_hardwareversion_t hw_version;
-    uint64_t result;
-    size_t i;
-
-    board_get_hardware_version(&hw_version);
-
-    result = CRC64_INITIAL;
-    for (i = 0; i < 16u; i++) {
-        result = crc64_add(result, hw_version.unique_id[i]);
-    }
-
-    return (result ^ CRC64_OUTPUT_XOR) & 0x01FFFFFFFFFFFFFFL;
-}
-
-
 void bootloader_autobaud_and_get_dynamic_node_id(void) {
     /* UAVCANBootloader_v0.3 #15: [!AppBLRequest]:INDICATE_AUTOBAUDING */
     board_indicate_autobaud_start();
@@ -423,71 +407,144 @@ void bootloader_autobaud_and_get_dynamic_node_id(void) {
 
 
 uint8_t bootloader_get_dynamic_node_id(void) {
-    uavcan_dynamicnodeidallocation_t allocation_msg, allocation_response;
-    uavcan_frame_id_t tx_frame_id, rx_frame_id;
-    uint32_t last_request_ticks, rx_message_id;
-    uint8_t tx_frame_payload[8], rx_frame_payload[8];
-    size_t tx_frame_len, rx_frame_len;
-    uint8_t node_id, got_frame;
-
-    node_id = 0;
-    got_frame = 0;
+    uavcan_hardwareversion_t hw_version;
+    uavcan_frame_id_t rx_frame_id;
+    uint32_t request_deadline_ticks, rx_message_id;
+    uint8_t rx_payload[8], node_id, got_allocation, server_node_id,
+            server_transfer_id, server_allocated_node_id, server_frame_index,
+            unique_id_matched, transfer_id, previously_matched;
+    size_t rx_len, i, offset;
+    uint16_t crc;
 
     /* UAVCANBootloader_v0.3 #18.6: GetUUID() */
-    allocation_msg.short_unique_id = bootloader_get_short_unique_id();
-    allocation_msg.node_id = node_id;
+    board_get_hardware_version(&hw_version);
 
-    /* Prepare the DynamicNodeIDAllocation request frame */
-    tx_frame_id.transfer_id = 0u;
-    tx_frame_id.last_frame = 1u;
-    tx_frame_id.frame_index = 0u;
-    tx_frame_id.source_node_id = 0u;
-    tx_frame_id.transfer_type = MESSAGE_BROADCAST;
-    tx_frame_id.data_type_id = UAVCAN_DYNAMICNODEIDALLOCATION_DTID;
-
-    tx_frame_len = uavcan_pack_dynamicnodeidallocation(
-        tx_frame_payload, &allocation_msg);
+    node_id = 0u;
+    transfer_id = 0u;
+    got_allocation = 0u;
+    unique_id_matched = 0u;
+    previously_matched = 0u;
+    server_node_id = 0u;
+    server_transfer_id = 0u;
+    server_frame_index = 0u;
+    server_allocated_node_id = 0u;
 
     /*
-    This is repeated indefinitely, rate limited at 0.5 message per second
-    and will exit to application if Timeout(Tboot) occurs.
-
-    A Timeout(Tboot) will never occur if !AppValid
+    Rule A: on initialization, the client subscribes to
+    uavcan.protocol.dynamic_node_id.Allocation and starts a Request Timer with
+    interval of Trequestinterval = 1 second
     */
+    request_deadline_ticks = g_bootloader_uptime + 100u; /* TODO setting? */
+
     do {
-        /* UAVCANBootloader_v0.3 #18.7: Req559.DynamicNodeIDAllocation.uavcan(uuid,0) */
-        tx_frame_id.transfer_id++;
-        can_tx(uavcan_make_message_id(&tx_frame_id), tx_frame_len,
-               tx_frame_payload, 0u);
+        /*
+        Rule B. On expiration of Request Timer:
+        1) Request Timer restarts.
+        2) The client broadcasts a first-stage Allocation request message,
+           where the fields are assigned following values:
+                node_id                 - preferred node ID, or zero if the
+                                          client doesn't have any preference
+                first_part_of_unique_id - true
+                unique_id               - first 7 bytes of unique ID
+        */
+        if (g_bootloader_uptime >= request_deadline_ticks) {
+            uavcan_tx_allocation_message(node_id, 16u, hw_version.unique_id,
+                                         0u, transfer_id++);
+            request_deadline_ticks = g_bootloader_uptime + 100u;
+        }
+
+
+        got_allocation = can_rx(&rx_message_id, &rx_len, rx_payload, 0u);
+        if (!got_allocation) {
+            continue;
+        }
+
+        uavcan_parse_message_id(&rx_frame_id, rx_message_id);
+        if (rx_frame_id.data_type_id != UAVCAN_DYNAMICNODEIDALLOCATION_DTID) {
+            continue;
+        }
 
         /*
-        FIXME: Rate limit is set to 2 messages per second. A rate limit
-        of 0.5 messages per second would mean only one message is sent
-        during the default Tboot.
+        Rule C. On any Allocation message, even if other rules also match:
+        1) Request Timer restarts.
         */
-        last_request_ticks = g_bootloader_uptime;
-        while (!g_bootloader_tboot_expired &&
-                !bootloader_timeout(last_request_ticks, 50u)) {
-            rx_message_id = 0u;
-            got_frame = can_rx(&rx_message_id, &rx_frame_len,
-                               rx_frame_payload, 0u);
-            uavcan_parse_message_id(&rx_frame_id, rx_message_id);
-            if (got_frame && rx_frame_id.data_type_id ==
-                        UAVCAN_DYNAMICNODEIDALLOCATION_DTID) {
-                uavcan_unpack_dynamicnodeidallocation(&allocation_response,
-                                                      rx_frame_payload);
-                if (allocation_response.short_unique_id ==
-                        allocation_msg.short_unique_id) {
-                    node_id = allocation_response.node_id;
-                    break;
-                }
+        request_deadline_ticks = g_bootloader_uptime + 100u;
+
+        /*
+        Skip this message if it's anonymous (from another client), or if it's
+        from a different server to the one we're listening to at the moment
+        */
+        if (!rx_frame_id.source_node_id || (server_node_id &&
+                    rx_frame_id.source_node_id != server_node_id)) {
+            continue;
+        } else if (!server_node_id ||
+                    rx_frame_id.transfer_id != server_transfer_id ||
+                    rx_frame_id.frame_index == 0) {
+            /* First (only?) frame of the transfer */
+            if (rx_frame_id.last_frame) {
+                crc = 0u;
+                server_allocated_node_id = rx_payload[0];
+                offset = 1u;
+            } else {
+                crc = (uint16_t)(rx_payload[0] | (rx_payload[1] << 8u));
+                server_allocated_node_id = rx_payload[2];
+                offset = 3u;
             }
+            server_node_id = rx_frame_id.source_node_id;
+            server_transfer_id = rx_frame_id.transfer_id;
+            unique_id_matched = 0u;
+            server_frame_index = 1u;
+        } else if (rx_frame_id.frame_index != server_frame_index){
+            continue;
+        } else {
+            offset = 0u;
+            server_frame_index++;
         }
 
-        if (g_bootloader_tboot_expired) {
-            break;
+        /*
+        Rule D. On an Allocation message WHERE (source node ID is
+        non-anonymous) AND (client's unique ID starts with the bytes available
+        in the field unique_id) AND (unique_id is less than 16 bytes long):
+        1) The client broadcasts a second-stage Allocation request message,
+           where the fields are assigned following values:
+                node_id                 - same value as in the first-stage
+                first_part_of_unique_id - false
+                unique_id               - at most 7 bytes of local unique ID
+                                          with an offset equal to number of
+                                          bytes in the received unique ID
+
+        Rule E. On an Allocation message WHERE (source node ID is
+        non-anonymous) AND (unique_id fully matches client's unique ID) AND
+        (node_id in the received message is not zero):
+        1) Request Timer stops.
+        2) The client initializes its node_id with the received value.
+        3) The client terminates subscription to Allocation messages.
+        4) Exit.
+        */
+
+        /* Count the number of unique ID bytes matched */
+        previously_matched = unique_id_matched;
+        for (i = offset; i < rx_len && unique_id_matched < 16u &&
+                hw_version.unique_id[unique_id_matched] == rx_payload[i];
+            unique_id_matched++, i++);
+
+        if (i < rx_len - offset) {
+            /* Abort if we didn't match the whole unique ID */
+            server_node_id = 0u;
+        } if (!rx_frame_id.last_frame) {
+            /* Don't take action until the last frame of the message */
+            continue;
+        } else  if (unique_id_matched < 16u) {
+            /* Case D */
+            uavcan_tx_allocation_message(node_id, 16u,
+                                         hw_version.unique_id,
+                                         unique_id_matched,
+                                         transfer_id++);
+        } else if (unique_id_matched == 16u) {
+            /* Case E */
+            node_id = server_allocated_node_id >> 1u;
         }
-    } while (node_id == 0u);
+    } while (node_id == 0u && !g_bootloader_tboot_expired);
 
     return node_id;
 }

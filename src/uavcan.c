@@ -41,34 +41,6 @@ size_t uavcan_pack_nodestatus(
 }
 
 
-size_t uavcan_pack_dynamicnodeidallocation(
-    uint8_t *data,
-    const uavcan_dynamicnodeidallocation_t *payload
-) {
-    size_t i;
-    for (i = 0u; i < 7u; i++) {
-        data[i] = ((uint8_t*)&payload->short_unique_id)[i];
-    }
-    data[7] = (uint8_t)
-            (((((uint8_t*)&payload->short_unique_id)[7] & 0x1u) << 7u) |
-            (payload->node_id & 0x7Fu));
-    return 8u;
-}
-
-
-void uavcan_unpack_dynamicnodeidallocation(
-    uavcan_dynamicnodeidallocation_t *payload,
-    const uint8_t *data
-) {
-    size_t i;
-    for (i = 0u; i < 7u; i++) {
-        ((uint8_t*)&payload->short_unique_id)[i] = data[i];
-    }
-    ((uint8_t*)&payload->short_unique_id)[7] = data[7] >> 7u;
-    payload->node_id = data[7] & 0x7Fu;
-}
-
-
 size_t uavcan_pack_logmessage(
     uint8_t *data,
     const uavcan_logmessage_t *payload
@@ -130,6 +102,41 @@ void uavcan_tx_nodestatus(
     frame_len = uavcan_pack_nodestatus(payload, &message);
 
     can_tx(uavcan_make_message_id(&frame_id), frame_len, payload, 1u);
+}
+
+
+void uavcan_tx_allocation_message(
+    uint8_t requested_node_id,
+    size_t unique_id_length,
+    const uint8_t *unique_id,
+    uint8_t unique_id_offset,
+    uint8_t transfer_id
+) {
+    uint8_t payload[8];
+    uavcan_frame_id_t frame_id;
+    size_t i, max_offset, checksum;
+
+    max_offset = unique_id_offset + 7u;
+    if (max_offset > unique_id_length) {
+        max_offset = unique_id_length;
+    }
+
+    payload[0] = (uint8_t)((requested_node_id << 1u) |
+                           (unique_id_offset ? 0u : 1u));
+    for (checksum = 0u, i = 0u; i < max_offset - unique_id_offset; i++) {
+        payload[i + 1u] = unique_id[unique_id_offset + i];
+        checksum += unique_id[unique_id_offset + i];
+    }
+
+    frame_id.transfer_id = transfer_id;
+    frame_id.last_frame = 1u;
+    frame_id.frame_index = 0u; //checksum;
+    frame_id.source_node_id = 0u;
+    frame_id.transfer_type = MESSAGE_BROADCAST;
+    frame_id.data_type_id = UAVCAN_DYNAMICNODEIDALLOCATION_DTID;
+
+    can_tx(uavcan_make_message_id(&frame_id), i + 1u,
+           payload, 0u);
 }
 
 
@@ -411,46 +418,62 @@ static can_error_t uavcan_rx_multiframe_(
         rx_message_id = 0u;
         rx_length = 0u;
         got_frame = can_rx(&rx_message_id, &rx_length, payload, 0u);
+        if (!got_frame) {
+            continue;
+        }
+
         uavcan_parse_message_id(&rx_id, rx_message_id);
-        if (got_frame &&
-                (frame_id->source_node_id == 0xFFu ||
-                    rx_id.source_node_id == frame_id->source_node_id) &&
-                (frame_id->transfer_id == 0xFFu ||
-                    (rx_id.transfer_id & 7u) ==
-                    (frame_id->transfer_id & 7u)) &&
-                rx_id.transfer_type == frame_id->transfer_type &&
-                rx_id.data_type_id == frame_id->data_type_id &&
-                rx_id.frame_index == num_frames &&
-                payload[0] == node_id) {
-            /*
-            Get the CRC if this is the first frame of a multi-frame transfer.
 
-            Also increase the timeout to UAVCAN_SERVICE_TIMEOUT_TICKS.
-            */
-            if (num_frames == 0u && !rx_id.last_frame) {
-                timeout_ticks = UAVCAN_SERVICE_TIMEOUT_TICKS;
-                message_crc = (uint16_t)(payload[1] | (payload[2] << 8u));
-                m = 3u;
-            } else {
-                m = 1u;
-            }
+        /*
+        Skip this frame if the source node ID is wrong, or if the data type or
+        transfer type do not match what we're expecting
+        */
+        if ((frame_id->source_node_id != 0xFFu &&
+                rx_id.source_node_id != frame_id->source_node_id) ||
+                rx_id.transfer_type != frame_id->transfer_type ||
+                rx_id.data_type_id != frame_id->data_type_id ||
+                payload[0] != node_id) {
+            continue;
+        }
 
-            /* Copy message bytes to the response */
-            for (; m < rx_length && i < *message_length; m++, i++) {
-                message[i] = payload[m];
-            }
-            num_frames++;
+        /*
+        Get the CRC if this is the first frame of a multi-frame transfer.
 
-            if (frame_id->transfer_id == 0xFFu) {
-                frame_id->transfer_id = rx_id.transfer_id;
-            }
+        Also increase the timeout to UAVCAN_SERVICE_TIMEOUT_TICKS.
+        */
+        if (rx_id.frame_index == 0u) {
+            num_frames = 0u;
+            frame_id->transfer_id = rx_id.transfer_id;
             if (frame_id->source_node_id == 0xFFu) {
                 frame_id->source_node_id = rx_id.source_node_id;
             }
+        }
 
-            if (rx_id.last_frame) {
-                break;
-            }
+        /* Skip if the transfer ID is wrong */
+        if ((frame_id->transfer_id ^ rx_id.transfer_id) & 0x7u) {
+            continue;
+        }
+
+        /*
+        Get the CRC and increase the service timeout if this is the first
+        frame
+        */
+        if (num_frames == 0u && !rx_id.last_frame) {
+            timeout_ticks = UAVCAN_SERVICE_TIMEOUT_TICKS;
+            message_crc = (uint16_t)(payload[1] | (payload[2] << 8u));
+            m = 3u;
+        } else {
+            m = 1u;
+        }
+
+        /* Copy message bytes to the response */
+        for (; m < rx_length && i < *message_length; m++, i++) {
+            message[i] = payload[m];
+        }
+        num_frames++;
+
+        if (rx_id.last_frame) {
+            break;
         }
     } while (g_bootloader_uptime - start_ticks < timeout_ticks);
 

@@ -68,9 +68,9 @@ typedef struct {
 
 
 typedef struct {
-    uint64_t short_unique_id;
-    uint8_t node_id;
-} __attribute__((packed)) uavcan_dynamicnodeidallocation_t;
+    uint8_t node_id; /* bottom bit is the first part flag */
+    uint8_t unique_id[16];
+} __attribute__((packed)) uavcan_allocation_t;
 
 #define UAVCAN_DYNAMICNODEIDALLOCATION_DTID 559u
 
@@ -164,14 +164,6 @@ size_t uavcan_pack_nodestatus(
     uint8_t *data,
     const uavcan_nodestatus_t *payload
 );
-size_t uavcan_pack_dynamicnodeidallocation(
-    uint8_t *data,
-    const uavcan_dynamicnodeidallocation_t *payload
-);
-void uavcan_unpack_dynamicnodeidallocation(
-    uavcan_dynamicnodeidallocation_t *payload,
-    const uint8_t *data
-);
 size_t uavcan_pack_logmessage(
     uint8_t *data,
     const uavcan_logmessage_t *payload
@@ -185,6 +177,13 @@ void uavcan_tx_nodestatus(
     uint8_t node_id,
     uint32_t uptime_sec,
     uint8_t status_code
+);
+void uavcan_tx_allocation_message(
+    uint8_t requested_node_id,
+    size_t unique_id_length,
+    const uint8_t *unique_id,
+    uint8_t unique_id_offset,
+    uint8_t transfer_id
 );
 void uavcan_tx_getnodeinfo_response(
     uint8_t node_id,
