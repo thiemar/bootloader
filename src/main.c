@@ -564,9 +564,35 @@ void bootloader_poll_getnodeinfo(
     uavcan_getnodeinfo_response_t response;
     uavcan_nodestatus_t node_status;
     uavcan_frame_id_t frame_id;
-    size_t frame_len;
+    size_t frame_len, i;
     uint32_t rx_message_id;
     uint8_t frame_payload[8], got_frame;
+
+    /* UAVCANBootloader_v0.3 #21.2.1.2: [AppValid]:SetAppVersion(SwVerion) */
+    node_status.uptime_sec = uptime;
+    node_status.status_code = status;
+    node_status.vendor_specific_status_code = 0u;
+    uavcan_pack_nodestatus(response.nodestatus, &node_status);
+
+    board_get_hardware_version(&response.hardware_version);
+    response.name_length = board_get_product_name(response.name);
+
+    if (g_bootloader_app_valid) {
+        response.software_version.major =
+            g_fw_image_descriptor->major_version;
+        response.software_version.minor =
+            g_fw_image_descriptor->minor_version;
+        response.software_version.optional_field_mask = 3u;
+            g_fw_image_descriptor->minor_version;
+        response.software_version.vcs_commit =
+            g_fw_image_descriptor->vcs_commit;
+        response.software_version.image_crc =
+            g_fw_image_descriptor->image_crc;
+    } else {
+        for (i = 0u; i < sizeof(response.software_version); i++) {
+            *(uint8_t*)(&response.software_version) = 0u;
+        }
+    }
 
     /*
     Receive from FIFO 1 -- filters are configured to push the messages there,
@@ -579,33 +605,6 @@ void bootloader_poll_getnodeinfo(
     if (got_frame && frame_id.data_type_id == UAVCAN_GETNODEINFO_DTID &&
             frame_payload[0] == node_id &&
             frame_id.last_frame) {
-        /* UAVCANBootloader_v0.3 #21.2.1.2: [AppValid]:SetAppVersion(SwVerion) */
-        node_status.uptime_sec = uptime;
-        node_status.status_code = status;
-        node_status.vendor_specific_status_code = 0u;
-        uavcan_pack_nodestatus(response.nodestatus, &node_status);
-        if (g_bootloader_app_valid) {
-            response.software_version.major =
-                g_fw_image_descriptor->major_version;
-            response.software_version.minor =
-                g_fw_image_descriptor->minor_version;
-            response.software_version.optional_field_mask = 3u;
-                g_fw_image_descriptor->minor_version;
-            response.software_version.vcs_commit =
-                g_fw_image_descriptor->vcs_commit;
-            response.software_version.image_crc =
-                g_fw_image_descriptor->image_crc;
-        } else {
-            response.software_version.major = 0u;
-            response.software_version.minor = 0u;
-            response.software_version.optional_field_mask = 0u;
-            response.software_version.vcs_commit = 0u;
-            response.software_version.image_crc = 0u;
-        }
-
-        board_get_hardware_version(&response.hardware_version);
-        response.name_length = board_get_product_name(response.name);
-
         /* UAVCANBootloader_v0.3 #21.2.1.3: 551.GetNodeInfo.uavcan */
         uavcan_tx_getnodeinfo_response(node_id, &response,
                                        frame_id.source_node_id,
@@ -743,6 +742,7 @@ flash_error_t bootloader_file_read_and_program(
 
     do {
         /*
+        TODO
         Rate limiting on read requests:
         - 2/sec on a 125 Kbaud bus
         - 4/sec on a 250 Kbaud bus

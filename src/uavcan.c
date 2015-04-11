@@ -14,7 +14,8 @@ static void uavcan_tx_multiframe_(
     uint8_t dest_node_id,
     size_t message_length,
     const uint8_t *message,
-    uint16_t initial_crc
+    uint16_t initial_crc,
+    uint8_t mailbox
 );
 static can_error_t uavcan_rx_multiframe_(
     uint8_t node_id,
@@ -146,81 +147,34 @@ void uavcan_tx_getnodeinfo_response(
     uint8_t dest_node_id,
     uint8_t transfer_id
 ) {
-    /* This sends via mailbox 1 because it's called from SysTick */
-    uint32_t i, m;
-    uint16_t frame_crc;
-    uavcan_frame_id_t frame_id;
-    uint8_t *message_bytes, payload[8];
-    size_t fixed_length, contiguous_length;
-
-    message_bytes = (uint8_t*)response;
-    fixed_length = 6u + sizeof(uavcan_softwareversion_t) + 2u + 16u + 1u;
-
     /*
-    Calculate the CRC of the node status, the software version and the
-    fixed-length part of the hardware version
+    This sends via mailbox 1 because it's called from SysTick. It may also
+    clobber response->name because it moves the name to the end of the COA.
     */
-    frame_crc = crc16_signature(UAVCAN_GETNODEINFO_CRC, fixed_length,
-                                message_bytes);
-    frame_crc ^= CRC16_OUTPUT_XOR;
-    /* Add the CRC for the variable-length parts */
-    frame_crc = crc16_signature(
-        frame_crc,
-        response->hardware_version.certificate_of_authenticity_length,
-        response->hardware_version.certificate_of_authenticity);
-    frame_crc ^= CRC16_OUTPUT_XOR;
-    frame_crc = crc16_signature(frame_crc, response->name_length,
-                                response->name);
+    uint32_t i;
+    uavcan_frame_id_t frame_id;
+    size_t fixed_length, contiguous_length, packet_length;
+
+    fixed_length = 6u + sizeof(uavcan_softwareversion_t) + 2u + 16u + 1u;
+    contiguous_length = fixed_length +
+        response->hardware_version.certificate_of_authenticity_length;
+    packet_length = contiguous_length + response->name_length;
+
+    /* Move name so it's contiguous with the start of the packet */
+    for (i = 0u; i < response->name_length; i++) {
+        ((uint8_t*)response)[contiguous_length + i] = response->name[i];
+    }
 
     /* Set up the message ID */
     frame_id.transfer_id = transfer_id;
-    frame_id.last_frame = 0u;
-    frame_id.frame_index = 0u;
     frame_id.source_node_id = node_id;
     frame_id.transfer_type = SERVICE_RESPONSE;
     frame_id.data_type_id = UAVCAN_GETNODEINFO_DTID;
 
-    /*
-    Send the fixed-length part of the message plus the COA bytes, since
-    they're contiguous
-    */
-    contiguous_length = fixed_length +
-        response->hardware_version.certificate_of_authenticity_length;
-    payload[0] = dest_node_id;
-    payload[1] = (uint8_t)frame_crc;
-    payload[2] = (uint8_t)(frame_crc >> 8u);
-    for (i = 0u, m = 3u; i < contiguous_length; i++) {
-        payload[m++] = message_bytes[i];
-        if (m == 8u) {
-            can_tx(uavcan_make_message_id(&frame_id), 8u, payload, 1u);
-            frame_id.frame_index++;
-            payload[0] = dest_node_id;
-            m = 1u;
-        }
-    }
-
-    /*  Now send the name */
-    for (i = 0u; i < response->name_length; i++) {
-        payload[m++] = response->name[i];
-        if (i == response->name_length - 1u) {
-            break;
-        } else if (m == 8u) {
-            /*
-            Don't send the final frame within this loop -- skip if it's about
-            to terminate.
-            */
-            can_tx(uavcan_make_message_id(&frame_id), 8u, payload, 1u);
-            frame_id.frame_index++;
-            payload[0] = dest_node_id;
-            m = 1u;
-        }
-    }
-
-    /* Send the last frame */
-    frame_id.last_frame = 1u;
-    can_tx(uavcan_make_message_id(&frame_id), m, payload, 1u);
+    uavcan_tx_multiframe_(&frame_id, dest_node_id, packet_length,
+                          (const uint8_t*)response, UAVCAN_GETNODEINFO_CRC,
+                          1u);
 }
-
 
 can_error_t uavcan_rx_beginfirmwareupdate_request(
     uint8_t node_id,
@@ -264,7 +218,7 @@ void uavcan_tx_read_request(
     frame_id.data_type_id = UAVCAN_READ_DTID;
 
     uavcan_tx_multiframe_(&frame_id, dest_node_id, request->path_length + 4u,
-                          (const uint8_t*)request, UAVCAN_READ_CRC);
+                          (const uint8_t*)request, UAVCAN_READ_CRC, 0u);
 }
 
 
@@ -313,7 +267,7 @@ void uavcan_tx_getinfo_request(
     frame_id.data_type_id = UAVCAN_GETINFO_DTID;
 
     uavcan_tx_multiframe_(&frame_id, dest_node_id, request->path_length,
-                          (const uint8_t*)request, UAVCAN_GETINFO_CRC);
+                          (const uint8_t*)request, UAVCAN_GETINFO_CRC, 0u);
 }
 
 
@@ -351,7 +305,8 @@ static void uavcan_tx_multiframe_(
     uint8_t dest_node_id,
     size_t message_length,
     const uint8_t *message,
-    uint16_t initial_crc
+    uint16_t initial_crc,
+    uint8_t mailbox
 ) {
     uint32_t i, m;
     uint16_t frame_crc;
@@ -379,7 +334,7 @@ static void uavcan_tx_multiframe_(
         if (i == message_length - 1u) {
             break;
         } else if (m == 8u) {
-            can_tx(uavcan_make_message_id(frame_id), 8u, payload, 0u);
+            can_tx(uavcan_make_message_id(frame_id), 8u, payload, mailbox);
             frame_id->frame_index++;
             payload[0] = dest_node_id;
             m = 1u;
@@ -388,7 +343,7 @@ static void uavcan_tx_multiframe_(
 
     /* Send the last (only?) frame */
     frame_id->last_frame = 1u;
-    can_tx(uavcan_make_message_id(frame_id), m, payload, 0u);
+    can_tx(uavcan_make_message_id(frame_id), m, payload, mailbox);
 }
 
 
