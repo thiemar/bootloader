@@ -168,8 +168,8 @@ void can_tx(
     Just block while waiting for the mailbox. Give it an extra 0.75 ms per
     frame to avoid an issue I'm seeing with packets going missing on a USBtin.
     */
-    cyccnt = DWT->CYCCNT;
-    while (!(CAN1->TSR & mask) || DWT->CYCCNT - cyccnt < 48000u);
+    cyccnt = SysTick->VAL;
+    while (!(CAN1->TSR & mask) || cyccnt - SysTick->VAL < 48000u);
 
     CAN1->sTxMailBox[mailbox].TIR = 0;
     CAN1->sTxMailBox[mailbox].TIR |= (message_id << 3u) | 0x4u;
@@ -218,7 +218,7 @@ uint8_t can_rx(
 }
 
 
-can_error_t can_autobaud(void) {
+can_speed_t can_autobaud(void) {
     can_speed_t measured_speed;
     uint32_t last_cyccnt, bit_cycles, measured_speed_bit_cycles, last_msr,
              overrun;
@@ -297,9 +297,10 @@ can_error_t can_autobaud(void) {
     }
 
     if (measured_speed > CAN_UNKNOWN) {
-        return can_init(measured_speed, 0u);
+        (void)can_init(measured_speed, 0u);
+        return measured_speed;
     }
 
 error:
-    return CAN_ERROR;
+    return CAN_UNKNOWN;
 }

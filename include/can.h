@@ -29,4 +29,4 @@ uint8_t can_rx(
     uint8_t fifo
 );
 can_error_t can_init(can_speed_t speed, uint8_t silent);
-can_error_t can_autobaud(void);
+can_speed_t can_autobaud(void);

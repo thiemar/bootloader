@@ -79,6 +79,10 @@ void board_initialize(void) {
     RCC->APB2ENR |= RCC_APB2ENR_SYSCFGEN;
     RCC->APB1ENR |= RCC_APB1ENR_CAN1EN;
 
+    /* CAN_DeInit(CAN1); */
+    RCC->APB1RSTR |= RCC_APB1RSTR_CAN1RST;
+    RCC->APB1RSTR &= ~RCC_APB1RSTR_CAN1RST;
+
     /*
     Configure RX and TX pins with:
     GPIO_Mode_AF
@@ -135,12 +139,8 @@ void board_initialize(void) {
     PORT_CAN_TX->AFR[PIN_CAN_TX_INDEX >> 3u] &= ~(0xFu << offset);
     PORT_CAN_TX->AFR[PIN_CAN_TX_INDEX >> 3u] |= 0x9u << offset;
 
-    /* GPIO_SetBits(PORT_CAN_SILENT, PIN_CAN_SILENT.GPIO_Pin); */
-    // PORT_CAN_SILENT->BSRR = (1u << PIN_CAN_SILENT_INDEX);
-
-    /* CAN_DeInit(CAN1); */
-    RCC->APB1RSTR |= RCC_APB1RSTR_CAN1RST;
-    RCC->APB1RSTR &= ~RCC_APB1RSTR_CAN1RST;
+    /* GPIO_ResetBits(PORT_CAN_SILENT, PIN_CAN_SILENT.GPIO_Pin); */
+    PORT_CAN_SILENT->BRR = (1u << PIN_CAN_SILENT_INDEX);
 }
 
 
