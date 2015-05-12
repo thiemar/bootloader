@@ -61,7 +61,9 @@ class AppDescriptor(object):
 
     @property
     def valid(self):
-        return False
+        return (self.signature == AppDescriptor.SIGNATURE and
+                self.image_crc != 0 and self.image_size > 0 and
+                self.reserved == AppDescriptor.RESERVED)
 
 
 class FirmwareImage(object):
